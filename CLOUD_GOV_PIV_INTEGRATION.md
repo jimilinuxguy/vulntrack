@@ -27,3 +27,20 @@ Reference: https://docs.cloudfoundry.org/concepts/identity-aware-routing.html
 
 ## Deployment state
 No public PIV-Proxy deployment has been performed. Do not use the local Docker endpoint as a public identity provider or disable authentication for the demo.
+
+## VulnTrack OIDC environment configuration
+
+After the proxy has a verified Cloud.gov mTLS ingress and a reachable HTTPS issuer, configure the following values (substitute the actual proxy hostname):
+
+```sh
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_ISSUER https://YOUR-PIV-PROXY-ISSUER
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_JWKS_URL https://YOUR-PIV-PROXY-ISSUER/jwks.json
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_AUDIENCE vulntrack
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_CLIENT_ID vulntrack
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_AUTHORIZE_URL https://YOUR-PIV-PROXY-ISSUER/authorize
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_TOKEN_URL https://YOUR-PIV-PROXY-ISSUER/token
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_REDIRECT_URI https://vulntrack-sandbox.app.cloud.gov/
+cf restart vulntrack-sandbox
+```
+
+Register the exact callback URL with PIV-Proxy's `OIDC_CLIENTS_JSON`. Use `VULNTRACK_ADMIN_SUBJECTS` only for explicitly authorized, verified `sub` values. These are placeholders, not deployable configuration until the Cloud.gov ingress requirement is satisfied.
