@@ -12,4 +12,4 @@ applications:
     env:
       VULNTRACK_CLOUD_FOUNDRY: 'true'
       VULNTRACK_DEMO_MODE: 'true'
-      VULNTRACK_DEV_AUTH: 'true'
+      VULNTRACK_DEV_AUTH: 'false'
