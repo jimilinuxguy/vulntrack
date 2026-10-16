@@ -166,3 +166,10 @@ def imports(db:Session=Depends(session),user:Principal=Depends(admin)):
 @app.get("/api/admin/audit")
 def audit_events(db:Session=Depends(session),user:Principal=Depends(admin)):
     return [{"action":x.action,"actor":x.actor,"object_id":x.object_id,"created_at":x.created_at} for x in db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(100))]
+
+# Register portal models before startup creates database tables.
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+from .portal import router as portal_router
+app.include_router(portal_router)
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
