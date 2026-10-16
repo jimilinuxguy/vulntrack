@@ -22,7 +22,8 @@ def principal(authorization: str | None = Header(default=None)) -> Principal:
         claims = jwt.decode(token, signing_key.key, algorithms=["RS256", "ES256"], issuer=settings.oidc_issuer, audience=settings.oidc_audience, options={"require": ["sub", "exp", "iss", "aud"]})
     except (jwt.PyJWTError, ValueError, ConnectionError) as exc:
         raise HTTPException(401, "Invalid identity token") from exc
-    return Principal(claims["sub"], admin="vulntrack-admin" in claims.get("roles", []))
+    allowed = {item.strip() for item in settings.admin_subjects.split(",") if item.strip()}
+    return Principal(claims["sub"], admin=claims["sub"] in allowed or "vulntrack-admin" in claims.get("roles", []))
 
 def admin(user: Principal = Depends(principal)) -> Principal:
     if not user.admin: raise HTTPException(403, "Administrator required")
