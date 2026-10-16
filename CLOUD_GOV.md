@@ -1,45 +1,29 @@
-# Deploy VulnTrack to Cloud.gov sandbox
+# Cloud.gov SQLite demonstration
 
-This is a disposable demonstration deployment, not a production authorization to process agency vulnerability data.
+The Cloud Foundry manifest uses an ephemeral SQLite database and automatically seeds **fictional** tenants, CVEs, KEVs, findings, and assignments. No RDS connection or service binding is required.
 
-## Prerequisites
-Install the Cloud Foundry CLI and obtain Cloud.gov sandbox access. Have a reachable OIDC identity provider (including PIV-Proxy if deployed separately) and register the final app route as an OIDC callback.
-
-## Provision and deploy
 ```sh
-cf login -a api.fr.cloud.gov --sso
-cf orgs
-cf target -o YOUR_SANDBOX_ORG -s YOUR_SPACE
-cf marketplace
+git checkout feat/cloud-gov-cloud-foundry
+git pull origin feat/cloud-gov-cloud-foundry
+cf push vulntrack-sandbox -f manifest.yml
+cf app vulntrack-sandbox
+curl -i https://vulntrack-sandbox.app.cloud.gov/health
 ```
 
-Select a PostgreSQL service and plan actually available to your space. For example, if offered:
-```sh
-cf create-service aws-rds micro-psql vulntrack-db
-cf service vulntrack-db
-```
+The manifest sets `VULNTRACK_CLOUD_FOUNDRY=true`, `VULNTRACK_DEMO_MODE=true`, and `VULNTRACK_DEV_AUTH=false`. SQLite is stored at `/tmp/vulntrack-demo.db`. Data can disappear on restart, restage, redeploy, or instance replacement. Use one instance and never store real findings or sensitive data in this demo.
 
-Wait for successful provisioning. The manifest binds service `vulntrack-db`. Cloud Foundry provides credentials through `VCAP_SERVICES`. The application refuses to start without a PostgreSQL binding and uses TLS to connect.
+**OIDC is still required to use the dashboard.** Configure a reachable identity provider, such as PIV-Proxy:
 
 ```sh
-cf push --no-start
 cf set-env vulntrack-sandbox VULNTRACK_OIDC_ISSUER https://YOUR-ISSUER
 cf set-env vulntrack-sandbox VULNTRACK_OIDC_JWKS_URL https://YOUR-ISSUER/jwks
 cf set-env vulntrack-sandbox VULNTRACK_OIDC_AUDIENCE vulntrack
-cf set-env vulntrack-sandbox VULNTRACK_OIDC_CLIENT_ID YOUR-PUBLIC-CLIENT-ID
+cf set-env vulntrack-sandbox VULNTRACK_OIDC_CLIENT_ID YOUR-CLIENT-ID
 cf set-env vulntrack-sandbox VULNTRACK_OIDC_AUTHORIZE_URL https://YOUR-ISSUER/authorize
 cf set-env vulntrack-sandbox VULNTRACK_OIDC_TOKEN_URL https://YOUR-ISSUER/token
-cf start vulntrack-sandbox
-cf app vulntrack-sandbox
-cf logs vulntrack-sandbox --recent
+cf restart vulntrack-sandbox
 ```
 
-Replace placeholder URLs with actual identity-provider metadata. The browser redirect URI must be registered as `https://YOUR-APP-ROUTE/`. The application must receive OIDC access tokens accepted by its issuer/JWKS/audience validation. `/health` checks web availability only.
+Register `https://vulntrack-sandbox.app.cloud.gov/` as an allowed OIDC redirect. Users need the `vulntrack-admin` role claim or explicit tenant membership to view demo data. The fictional seed memberships do not automatically grant access to real users.
 
-## Safety
-- Never enable `VULNTRACK_DEV_AUTH` on Cloud Foundry; startup rejects it.
-- The local demo seed command requires development auth and is deliberately unavailable on Cloud Foundry. Do not bypass the restriction.
-- Keep secrets out of Git and avoid pasting `cf env` or `VCAP_SERVICES` output into tickets.
-- Database schema currently uses `create_all`; production requires migrations, review of tenant isolation and access controls, and an approved deployment boundary.
-- The manifest runs one instance for sandbox evaluation, not high availability.
-- `cf push` deploys Python buildpack assets; Docker Compose remains local-only.
+For production, disable `VULNTRACK_DEMO_MODE`, restore the managed PostgreSQL service binding, resolve network access, and add proper migrations. Do not enable development authentication in Cloud Foundry.

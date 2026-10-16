@@ -46,6 +46,12 @@ def secure_url(url):
     return urlunsplit(("postgresql+psycopg", parsed.netloc, parsed.path, urlencode(params), parsed.fragment))
 
 def resolve_database_url():
+    if settings.demo_mode:
+        if settings.dev_auth:
+            raise RuntimeError('Development authentication forbidden in demo mode')
+        if not (os.getenv('VCAP_APPLICATION') or settings.cloud_foundry):
+            raise RuntimeError('Demo mode requires Cloud Foundry')
+        return 'sqlite:////tmp/vulntrack-demo.db'
     if os.getenv("VCAP_APPLICATION") or settings.cloud_foundry:
         if settings.dev_auth:
             raise RuntimeError("Development authentication forbidden on Cloud Foundry")

@@ -15,6 +15,16 @@ app = FastAPI(title="VulnTrack", version="0.1.0", description="Multi-tenant vuln
 @app.on_event("startup")
 def init_db():
     Base.metadata.create_all(bind=engine)
+    if settings.demo_mode:
+        from .seed_demo import seed
+        from .db import SessionLocal
+        with SessionLocal() as db:
+            try:
+                seed(db)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
 class TenantCreate(BaseModel):
     name: str = Field(min_length=1,max_length=200)

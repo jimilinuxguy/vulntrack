@@ -18,3 +18,28 @@ def test_vcap_invalid(monkeypatch):
     monkeypatch.setenv("VCAP_SERVICES", "not json")
     with pytest.raises(RuntimeError):
         cloud_database_url()
+
+
+def test_demo_sqlite_without_rds(monkeypatch):
+    from app import db
+    monkeypatch.setattr(db.settings, "demo_mode", True)
+    monkeypatch.setattr(db.settings, "cloud_foundry", True)
+    monkeypatch.setattr(db.settings, "dev_auth", False)
+    monkeypatch.delenv("VCAP_SERVICES", raising=False)
+    assert db.resolve_database_url() == "sqlite:////tmp/vulntrack-demo.db"
+
+def test_demo_rejects_dev_auth(monkeypatch):
+    from app import db
+    monkeypatch.setattr(db.settings, "demo_mode", True)
+    monkeypatch.setattr(db.settings, "dev_auth", True)
+    with pytest.raises(RuntimeError, match="Development authentication"):
+        db.resolve_database_url()
+
+def test_demo_requires_cloud_foundry(monkeypatch):
+    from app import db
+    monkeypatch.setattr(db.settings, "demo_mode", True)
+    monkeypatch.setattr(db.settings, "cloud_foundry", False)
+    monkeypatch.setattr(db.settings, "dev_auth", False)
+    monkeypatch.delenv("VCAP_APPLICATION", raising=False)
+    with pytest.raises(RuntimeError, match="requires Cloud Foundry"):
+        db.resolve_database_url()
