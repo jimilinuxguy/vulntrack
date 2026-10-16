@@ -1,0 +1,25 @@
+services:
+  api:
+    build: .
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      VULNTRACK_DATABASE_URL: postgresql+psycopg://vulntrack:${POSTGRES_PASSWORD:-vulntrack}@db:5432/vulntrack
+      VULNTRACK_OIDC_ISSUER: ${VULNTRACK_OIDC_ISSUER:-}
+      VULNTRACK_OIDC_JWKS_URL: ${VULNTRACK_OIDC_JWKS_URL:-}
+      VULNTRACK_OIDC_AUDIENCE: ${VULNTRACK_OIDC_AUDIENCE:-vulntrack}
+      VULNTRACK_DEV_AUTH: ${VULNTRACK_DEV_AUTH:-false}
+    depends_on:
+      db: {condition: service_healthy}
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vulntrack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vulntrack}
+      POSTGRES_DB: vulntrack
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vulntrack"]
+      interval: 5s
+      retries: 10
+    volumes: ["postgres:/var/lib/postgresql/data"]
+volumes:
+  postgres:
