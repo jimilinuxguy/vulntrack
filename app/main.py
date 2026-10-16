@@ -92,11 +92,57 @@ def add_member(tenant_id:str,body:MemberCreate,db:Session=Depends(session),user:
     return {"subject":body.subject,"role":body.role}
 
 @app.get("/api/vulnerabilities")
-def vulnerabilities(db:Session=Depends(session),user:Principal=Depends(principal),limit:int=Query(default=100,ge=1,le=500)):
-    ids=visible_tenants(db,user)
-    stmt=select(Vulnerability).join(Occurrence,Occurrence.vulnerability_id==Vulnerability.id).join(Asset,Asset.id==Occurrence.asset_id).where(Asset.tenant_id.in_(ids)).distinct().limit(limit)
-    if user.admin: stmt=select(Vulnerability).limit(limit)
-    return [{"id":v.id,"title":v.title,"severity":v.severity,"is_kev":v.is_kev,"identifiers":[f"{i.namespace}:{i.value}" for i in db.scalars(select(Identifier).where(Identifier.vulnerability_id==v.id))]} for v in db.scalars(stmt)]
+def vulnerabilities(db: Session = Depends(session), user: Principal = Depends(principal),
+                    q: str = Query(default="", max_length=250),
+                    kev_only: bool = False, has_findings: bool = False,
+                    tenant_id: str | None = None,
+                    page: int = Query(default=1, ge=1),
+                    page_size: int = Query(default=25, ge=1, le=100)):
+    """Paginated canonical registry with tenant-scoped impact counts."""
+    allowed = visible_tenants(db, user)
+    if tenant_id:
+        require_tenant(db, user, tenant_id)
+        allowed = {tenant_id}
+    impact = (select(Occurrence.vulnerability_id.label("vuln_id"),
+                     func.count(Occurrence.id).label("occurrence_count"),
+                     func.count(func.distinct(Asset.tenant_id)).label("tenant_count"))
+              .join(Asset, Asset.id == Occurrence.asset_id)
+              .where(Asset.tenant_id.in_(allowed))
+              .group_by(Occurrence.vulnerability_id).subquery())
+    stmt = (select(Vulnerability, func.coalesce(impact.c.occurrence_count, 0),
+                   func.coalesce(impact.c.tenant_count, 0))
+            .outerjoin(impact, impact.c.vuln_id == Vulnerability.id))
+    if not user.admin or has_findings:
+        stmt = stmt.where(impact.c.occurrence_count.is_not(None))
+    if kev_only:
+        stmt = stmt.where(Vulnerability.is_kev.is_(True))
+    if q.strip():
+        from sqlalchemy import or_
+        needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        stmt = stmt.where(or_(
+            Vulnerability.title.ilike(needle, escape="\\"),
+            select(Identifier.id).where(
+                Identifier.vulnerability_id == Vulnerability.id,
+                Identifier.value.ilike(needle, escape="\\")
+            ).exists()))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
+    stmt = (stmt.order_by(func.coalesce(impact.c.tenant_count, 0).desc(),
+                          func.coalesce(impact.c.occurrence_count, 0).desc(),
+                          Vulnerability.title.asc(), Vulnerability.id.asc())
+            .offset((page - 1) * page_size).limit(page_size))
+    rows = db.execute(stmt).all()
+    vuln_ids = [v.id for v, _, _ in rows]
+    identifiers = {}
+    if vuln_ids:
+        for ident in db.scalars(select(Identifier).where(Identifier.vulnerability_id.in_(vuln_ids))):
+            identifiers.setdefault(ident.vulnerability_id, []).append(f"{ident.namespace}:{ident.value}")
+    return {"items": [
+        {"id": v.id, "title": v.title, "severity": v.severity,
+         "is_kev": v.is_kev, "identifiers": identifiers.get(v.id, []),
+         "tenant_count": tenant_count, "occurrence_count": occurrence_count}
+        for v, occurrence_count, tenant_count in rows
+    ], "total": total, "page": page, "page_size": page_size,
+        "pages": (total + page_size - 1) // page_size}
 
 @app.get("/api/occurrences")
 def occurrences(tenant_id:str|None=None,db:Session=Depends(session),user:Principal=Depends(principal)):
