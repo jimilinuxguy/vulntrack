@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import os
 from fastapi import Depends, Header, HTTPException
 import jwt
 from jwt import PyJWKClient
@@ -11,7 +12,10 @@ class Principal:
 
 def principal(authorization: str | None = Header(default=None)) -> Principal:
     if settings.dev_auth and not settings.oidc_issuer:
-        return Principal("local-dev", admin=True)
+        if settings.demo_mode and os.getenv("VULNTRACK_ALLOW_PUBLIC_DEMO", "").lower() == "true":
+            return Principal("demo-admin", admin=True)
+        if not settings.cloud_foundry and not os.getenv("VCAP_APPLICATION") and not settings.demo_mode:
+            return Principal("local-dev", admin=True)
     if not settings.oidc_issuer or not settings.oidc_jwks_url:
         raise HTTPException(503, "OIDC provider not configured")
     if not authorization or not authorization.startswith("Bearer "):

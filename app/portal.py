@@ -77,7 +77,7 @@ def auth_config():
         "token_url": os.getenv("VULNTRACK_OIDC_TOKEN_URL", ""),
         "redirect_uri": os.getenv("VULNTRACK_OIDC_REDIRECT_URI", ""),
         "scope": os.getenv("VULNTRACK_OIDC_SCOPE", "openid profile"),
-        "dev_auth": os.getenv("VULNTRACK_DEV_AUTH", "").lower() == "true" and not os.getenv("VULNTRACK_OIDC_ISSUER"),
+        "dev_auth": os.getenv("VULNTRACK_DEV_AUTH", "").lower() == "true" and not os.getenv("VULNTRACK_OIDC_ISSUER") and (not os.getenv("VCAP_APPLICATION") and not os.getenv("VULNTRACK_CLOUD_FOUNDRY", "").lower() == "true" or os.getenv("VULNTRACK_DEMO_MODE", "").lower() == "true" and os.getenv("VULNTRACK_ALLOW_PUBLIC_DEMO", "").lower() == "true"),
     }
 
 @router.get("/api/occurrences/{occurrence_id}/detail")

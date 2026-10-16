@@ -47,8 +47,8 @@ def secure_url(url):
 
 def resolve_database_url():
     if settings.demo_mode:
-        if settings.dev_auth:
-            raise RuntimeError('Development authentication forbidden in demo mode')
+        if settings.dev_auth and os.getenv('VULNTRACK_ALLOW_PUBLIC_DEMO', '').lower() != 'true':
+            raise RuntimeError('Demo dev authentication requires explicit VULNTRACK_ALLOW_PUBLIC_DEMO=true acknowledgement')
         if not (os.getenv('VCAP_APPLICATION') or settings.cloud_foundry):
             raise RuntimeError('Demo mode requires Cloud Foundry')
         return 'sqlite:////tmp/vulntrack-demo.db'
