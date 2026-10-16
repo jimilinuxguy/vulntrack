@@ -8,9 +8,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import ForeignKey, String, Text, DateTime, select
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .db import Base, session
-from .models import Occurrence, Asset, Vulnerability, Observation, AuditEvent, new_id
+from .models import Occurrence, Asset, Vulnerability, Observation, AuditEvent, Tenant, Identifier, new_id
 from .auth import Principal, principal
-from .main import require_tenant, audit
+from .main import require_tenant, audit, visible_tenants
 
 router = APIRouter()
 
@@ -69,3 +69,40 @@ def add_note(occurrence_id: str, body: NoteInput, db: Session = Depends(session)
 @router.get("/")
 def index():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+@router.get("/api/vulnerabilities/{vulnerability_id}/impact")
+def vulnerability_impact(vulnerability_id: str, tenant_id: str | None = None, db: Session = Depends(session), user: Principal = Depends(principal)):
+    """Show one canonical vulnerability and its occurrences within authorized tenants."""
+    vuln = db.get(Vulnerability, vulnerability_id)
+    if vuln is None:
+        raise HTTPException(404, "Vulnerability not found")
+    allowed = visible_tenants(db, user)
+    if tenant_id:
+        require_tenant(db, user, tenant_id)
+        allowed = {tenant_id}
+    rows = db.execute(
+        select(Occurrence, Asset, Tenant)
+        .join(Asset, Occurrence.asset_id == Asset.id)
+        .join(Tenant, Asset.tenant_id == Tenant.id)
+        .where(Occurrence.vulnerability_id == vulnerability_id, Asset.tenant_id.in_(allowed))
+        .order_by(Tenant.name, Asset.name)
+    ).all()
+    if not rows and not user.admin:
+        raise HTTPException(404, "Vulnerability not found")
+    tenants = {}
+    for occurrence, asset, tenant in rows:
+        item = tenants.setdefault(tenant.id, {"id": tenant.id, "name": tenant.name, "total": 0, "by_status": {}, "assets": []})
+        item["total"] += 1
+        item["by_status"][occurrence.status] = item["by_status"].get(occurrence.status, 0) + 1
+        item["assets"].append({
+            "occurrence_id": occurrence.id, "name": asset.name, "kind": asset.kind,
+            "external_id": asset.external_id, "context": occurrence.context,
+            "status": occurrence.status, "assignee": occurrence.assignee, "due_date": occurrence.due_date,
+        })
+    identifiers = [f"{i.namespace}:{i.value}" for i in db.scalars(select(Identifier).where(Identifier.vulnerability_id == vulnerability_id))]
+    return {
+        "id": vuln.id, "title": vuln.title, "severity": vuln.severity,
+        "is_kev": vuln.is_kev, "kev_metadata": vuln.kev_metadata or {},
+        "identifiers": identifiers, "tenant_count": len(tenants),
+        "total_occurrences": len(rows), "tenants": list(tenants.values()),
+    }

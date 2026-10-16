@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-const state = {token: null, config: null, me: null, tenants: [], findings: [], registry: [], dashboard: {}, view: "overview", tenant: ""};
+const state = {token: null, config: null, me: null, tenants: [], findings: [], registry: [], registryPage: 1, registryTotal: 0, registryPages: 0, dashboard: {}, view: "overview", tenant: ""};
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const badge = (value) => '<span class="pill '+escapeHtml(value)+'">'+escapeHtml(String(value||"unknown").replaceAll("_"," "))+'</span>';
 function notify(message,error=false){const el=$("notice");el.textContent=message;el.classList.remove("hidden");el.classList.toggle("error",error);clearTimeout(notify.timer);notify.timer=setTimeout(()=>el.classList.add("hidden"),7000)}
@@ -64,9 +64,9 @@ function renderTenants(){
 }
 async function refresh(){
  const suffix=state.tenant?"?tenant_id="+encodeURIComponent(state.tenant):"";
- const [dashboard,findings,registry]=await Promise.all([
- request("/api/dashboard"+suffix),request("/api/occurrences"+suffix),request("/api/vulnerabilities")]);
- state.dashboard=dashboard;state.findings=findings;state.registry=registry;
+ const [dashboard,findings]=await Promise.all([
+ request("/api/dashboard"+suffix),request("/api/occurrences"+suffix)]);
+ state.dashboard=dashboard;state.findings=findings; await loadRegistry();
  renderOverview();renderFindings();renderRegistry();
  if(state.me.admin&&state.view==="admin")await renderImports();
  $("connection").textContent="● Connected";
@@ -95,13 +95,39 @@ function renderFindings(){
  const rows=state.findings.filter(f=>(!status||f.status===status)&&(!search||[f.title,f.asset,f.assignee,f.context,f.severity].some(v=>String(v||"").toLowerCase().includes(search))));
  $("finding-table").innerHTML=table(rows,findingColumns);
 }
+async function loadRegistry(){
+ const params=new URLSearchParams({page:String(state.registryPage),page_size:"25"});
+ const q=$("registry-search").value.trim(),filter=$("registry-filter").value;
+ if(q)params.set("q",q);
+ if(filter==="kev"||filter==="kev_findings")params.set("kev_only","true");
+ if(filter==="findings"||filter==="kev_findings")params.set("has_findings","true");
+ if(state.tenant)params.set("tenant_id",state.tenant);
+ const data=await request("/api/vulnerabilities?"+params);
+ state.registry=data.items;state.registryTotal=data.total;state.registryPages=data.pages;
+ renderRegistry();
+}
 function renderRegistry(){
- const visible=state.tenant?new Set(state.findings.map(f=>f.vulnerability_id)):null;
- const rows=state.registry.filter(v=>!visible||visible.has(v.id));
- $("registry-table").innerHTML=table(rows,[
+ $("registry-table").innerHTML=table(state.registry,[
  {title:"Vulnerability",cell:r=>'<strong>'+escapeHtml(r.title)+'</strong><small class="mono">'+escapeHtml(r.identifiers.join(" · "))+'</small>'},
  {title:"Severity",cell:r=>badge(r.severity)},
- {title:"Intelligence",cell:r=>r.is_kev?'<span class="kev">● CISA KEV</span>':"—"}],"No vulnerabilities registered.");
+ {title:"Intelligence",cell:r=>r.is_kev?'<span class="kev">● CISA KEV</span>':"—"},
+ {title:"Affected tenants",cell:r=>'<strong>'+r.tenant_count+'</strong><small>'+r.occurrence_count+' findings</small>'},
+ {title:"Tenant impact",cell:r=>'<span class="impact-link">View affected tenants →</span>'}],"No vulnerabilities match these filters.");
+ $("registry-count").textContent=state.registryTotal+" vulnerabilities";
+ $("registry-prev").disabled=state.registryPage<=1;
+ $("registry-next").disabled=state.registryPage>=state.registryPages;
+ $("registry-page").textContent="Page "+state.registryPage+" of "+Math.max(1,state.registryPages);
+}
+async function openImpact(id){
+ const suffix=state.tenant?"?tenant_id="+encodeURIComponent(state.tenant):"";
+ const v=await request("/api/vulnerabilities/"+encodeURIComponent(id)+"/impact"+suffix);
+ $("detail-title").textContent=v.title;
+ const meta=Object.entries(v.kev_metadata||{}).filter(([,value])=>value).map(([key,value])=>'<dt>'+escapeHtml(key.replace(/([A-Z])/g," $1"))+'</dt><dd>'+escapeHtml(value)+'</dd>').join("");
+ $("detail-body").innerHTML='<section class="drawer-section"><h3>Canonical vulnerability</h3><p>'+(v.is_kev?'<span class="kev">● CISA KEV</span>':'Not in KEV')+'</p><p class="mono">'+escapeHtml(v.identifiers.join(" · "))+'</p><p>'+badge(v.severity)+'</p>'+(meta?'<dl>'+meta+'</dl>':'')+'</section>'+
+ '<section class="drawer-section"><h3>Affected tenants ('+v.tenant_count+')</h3><p>'+v.total_occurrences+' remediation occurrences within your authorized scope</p>'+
+ (v.tenants.length?v.tenants.map(t=>'<details class="impact-tenant"><summary><strong>'+escapeHtml(t.name)+'</strong><span>'+t.total+' findings · '+Object.entries(t.by_status).map(([s,n])=>n+' '+s.replaceAll("_"," ")).join(", ")+'</span></summary><div class="impact-assets">'+t.assets.map(a=>'<div class="impact-asset"><div><strong>'+escapeHtml(a.name)+'</strong><small>'+escapeHtml(a.kind)+' · '+escapeHtml(a.external_id)+'</small><small>'+escapeHtml(a.context||"No component context")+'</small></div><div>'+badge(a.status)+'<small>'+escapeHtml(a.assignee||"Unassigned")+'</small><small>Due: '+escapeHtml(a.due_date||"Not set")+'</small><button class="text-button impact-open" data-occurrence="'+escapeHtml(a.occurrence_id)+'">Open remediation →</button></div></div>').join("")+'</div></details>').join(""):'<div class="empty">No affected tenants in your authorized scope.</div>')+'</section>';
+ $("drawer").classList.remove("hidden");$("drawer-backdrop").classList.remove("hidden");
+ $("detail-body").querySelectorAll(".impact-open").forEach(b=>b.onclick=()=>openFinding(b.dataset.occurrence).catch(err=>notify(err.message,true)));
 }
 async function renderImports(){
  const imports=await request("/api/admin/imports");
@@ -138,6 +164,12 @@ function bind(){
  $("logout").onclick=()=>{showLogin();notify("Signed out of VulnTrack. Your identity provider session may remain active.")};
  $("refresh").onclick=()=>refresh().catch(e=>notify(e.message,true));
  $("tenant-select").onchange=e=>{state.tenant=e.target.value;refresh().catch(err=>notify(err.message,true))};
+ let registryTimer;
+ $("registry-search").oninput=()=>{clearTimeout(registryTimer);registryTimer=setTimeout(()=>{state.registryPage=1;loadRegistry().catch(err=>notify(err.message,true))},250)};
+ $("registry-filter").onchange=()=>{state.registryPage=1;loadRegistry().catch(err=>notify(err.message,true))};
+ $("registry-prev").onclick=()=>{if(state.registryPage>1){state.registryPage--;loadRegistry().catch(err=>notify(err.message,true))}};
+ $("registry-next").onclick=()=>{if(state.registryPage<state.registryPages){state.registryPage++;loadRegistry().catch(err=>notify(err.message,true))}};
+ $("registry-table").onclick=e=>{const row=e.target.closest("[data-id]");if(row)openImpact(row.dataset.id).catch(err=>notify(err.message,true))};
  $("finding-search").oninput=renderFindings;$("status-filter").onchange=renderFindings;
  document.querySelectorAll("[data-view]").forEach(el=>el.onclick=()=>view(el.dataset.view));
  document.querySelectorAll("[data-goto]").forEach(el=>el.onclick=()=>view(el.dataset.goto));
