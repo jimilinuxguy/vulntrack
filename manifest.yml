@@ -1,0 +1,16 @@
+---
+applications:
+  - name: vulntrack-sandbox
+    memory: 512M
+    disk_quota: 1G
+    instances: 1
+    buildpacks:
+      - python_buildpack
+    command: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    health-check-type: http
+    health-check-http-endpoint: /health
+    env:
+      VULNTRACK_CLOUD_FOUNDRY: 'true'
+      VULNTRACK_DEMO_MODE: 'true'
+      VULNTRACK_DEV_AUTH: 'true'
+      VULNTRACK_ALLOW_PUBLIC_DEMO: 'true'

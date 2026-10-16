@@ -2,8 +2,10 @@
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
+import httpx
+from urllib.parse import urlsplit, parse_qs
 from pydantic import BaseModel, Field
 from sqlalchemy import ForeignKey, String, Text, DateTime, select
 from sqlalchemy.orm import Mapped, mapped_column, Session
@@ -25,6 +27,46 @@ class Note(Base):
 class NoteInput(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
+
+@router.post("/api/auth/token")
+async def oidc_token(request: Request):
+    endpoint = os.getenv("VULNTRACK_OIDC_TOKEN_URL", "")
+    client_id = os.getenv("VULNTRACK_OIDC_CLIENT_ID", "")
+    expected_redirect = os.getenv("VULNTRACK_OIDC_REDIRECT_URI", "")
+    issuer = os.getenv("VULNTRACK_OIDC_ISSUER", "").rstrip("/")
+    if (not endpoint or not issuer or not expected_redirect or not client_id
+            or urlsplit(endpoint).scheme != "https" or urlsplit(endpoint).username
+            or urlsplit(endpoint).fragment or urlsplit(endpoint).netloc != urlsplit(issuer).netloc
+            or urlsplit(expected_redirect).scheme != "https"):
+        raise HTTPException(503, "OIDC provider unavailable")
+    if request.headers.get("content-type", "").split(";")[0].strip() != "application/x-www-form-urlencoded":
+        raise HTTPException(415, "Form encoding required")
+    raw = await request.body()
+    if len(raw) > 4096:
+        raise HTTPException(413, "Request too large")
+    try:
+        form = parse_qs(raw.decode("utf-8"), keep_blank_values=True)
+    except UnicodeDecodeError:
+        raise HTTPException(400, "Invalid form")
+    required = {"grant_type", "code", "client_id", "redirect_uri", "code_verifier"}
+    if set(form) != required or any(len(v) != 1 for v in form.values()):
+        raise HTTPException(400, "Invalid OIDC parameters")
+    if form["grant_type"][0] != "authorization_code" or form["client_id"][0] != client_id:
+        raise HTTPException(400, "OIDC client mismatch")
+    if form["redirect_uri"][0] != expected_redirect:
+        raise HTTPException(400, "OIDC redirect mismatch")
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=False) as client:
+            response = await client.post(endpoint, data={k: v[0] for k, v in form.items()})
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "OIDC token service unavailable") from exc
+    if response.status_code != 200:
+        raise HTTPException(401, "OIDC exchange rejected")
+    tokens = response.json()
+    if not isinstance(tokens, dict) or not isinstance(tokens.get("id_token"), str):
+        raise HTTPException(502, "OIDC response invalid")
+    return JSONResponse({"id_token": tokens["id_token"]}, headers={"Cache-Control": "no-store"})
+
 @router.get("/api/auth/config")
 def auth_config():
     # Only public client metadata; secrets must never be placed here.
@@ -33,8 +75,9 @@ def auth_config():
         "client_id": os.getenv("VULNTRACK_OIDC_CLIENT_ID", ""),
         "authorize_url": os.getenv("VULNTRACK_OIDC_AUTHORIZE_URL", ""),
         "token_url": os.getenv("VULNTRACK_OIDC_TOKEN_URL", ""),
+        "redirect_uri": os.getenv("VULNTRACK_OIDC_REDIRECT_URI", ""),
         "scope": os.getenv("VULNTRACK_OIDC_SCOPE", "openid profile"),
-        "dev_auth": os.getenv("VULNTRACK_DEV_AUTH", "").lower() == "true" and not os.getenv("VULNTRACK_OIDC_ISSUER"),
+        "dev_auth": os.getenv("VULNTRACK_DEV_AUTH", "").lower() == "true" and not os.getenv("VULNTRACK_OIDC_ISSUER") and (not os.getenv("VCAP_APPLICATION") and not os.getenv("VULNTRACK_CLOUD_FOUNDRY", "").lower() == "true" or os.getenv("VULNTRACK_DEMO_MODE", "").lower() == "true" and os.getenv("VULNTRACK_ALLOW_PUBLIC_DEMO", "").lower() == "true"),
     }
 
 @router.get("/api/occurrences/{occurrence_id}/detail")
