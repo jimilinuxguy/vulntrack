@@ -39,12 +39,14 @@ async function handleCallback(){
  sessionStorage.removeItem("vt_pkce");
  const c=state.config;
  const form=new URLSearchParams({grant_type:"authorization_code",code:query.get("code"),redirect_uri:location.origin+"/",client_id:c.client_id,code_verifier:saved.verifier});
- const response=await fetch(c.token_url,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:form});
+ const response=await fetch("/api/auth/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:form,cache:"no-store"});
  const tokens=await response.json();
  history.replaceState(null,"","/");
- if(!response.ok||!tokens.access_token)throw new Error("OIDC token exchange failed");
+ if(!response.ok||!tokens.id_token)throw new Error("OIDC token exchange failed");
+ const claims=JSON.parse(atob(tokens.id_token.split(".")[1].replace(/-/g,"+").replace(/_/g,"/")));
+ if(claims.nonce!==saved.nonce)throw new Error("OIDC nonce mismatch");
  // Access token remains in this browser tab only. API validates signature, issuer, audience, and expiration.
- state.token=tokens.access_token;sessionStorage.setItem("vt_token",state.token);
+ state.token=tokens.id_token;sessionStorage.setItem("vt_token",state.token);
 }
 async function loadApp(){
  state.me=await request("/api/me");
