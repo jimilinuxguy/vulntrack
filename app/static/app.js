@@ -25,7 +25,7 @@ async function signIn(){
  const challenge=base64url(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(verifier)));
  const url=new URL(c.authorize_url);
  url.searchParams.set("client_id",c.client_id);url.searchParams.set("response_type","code");
- url.searchParams.set("redirect_uri",location.origin+"/");url.searchParams.set("scope",c.scope||"openid profile");
+ url.searchParams.set("redirect_uri",c.redirect_uri||location.origin+"/");url.searchParams.set("scope",c.scope||"openid profile");
  url.searchParams.set("code_challenge",challenge);url.searchParams.set("code_challenge_method","S256");
  url.searchParams.set("state",stateValue);url.searchParams.set("nonce",nonce);
  location.assign(url.toString());
@@ -38,7 +38,7 @@ async function handleCallback(){
  if(!saved||saved.state!==query.get("state"))throw new Error("Invalid login state. Please try again.");
  sessionStorage.removeItem("vt_pkce");
  const c=state.config;
- const form=new URLSearchParams({grant_type:"authorization_code",code:query.get("code"),redirect_uri:location.origin+"/",client_id:c.client_id,code_verifier:saved.verifier});
+ const form=new URLSearchParams({grant_type:"authorization_code",code:query.get("code"),redirect_uri:c.redirect_uri||location.origin+"/",client_id:c.client_id,code_verifier:saved.verifier});
  const response=await fetch("/api/auth/token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:form,cache:"no-store"});
  const tokens=await response.json();
  history.replaceState(null,"","/");

@@ -32,7 +32,12 @@ class NoteInput(BaseModel):
 async def oidc_token(request: Request):
     endpoint = os.getenv("VULNTRACK_OIDC_TOKEN_URL", "")
     client_id = os.getenv("VULNTRACK_OIDC_CLIENT_ID", "")
-    if not endpoint or urlsplit(endpoint).scheme != "https" or not client_id:
+    expected_redirect = os.getenv("VULNTRACK_OIDC_REDIRECT_URI", "")
+    issuer = os.getenv("VULNTRACK_OIDC_ISSUER", "").rstrip("/")
+    if (not endpoint or not issuer or not expected_redirect or not client_id
+            or urlsplit(endpoint).scheme != "https" or urlsplit(endpoint).username
+            or urlsplit(endpoint).fragment or urlsplit(endpoint).netloc != urlsplit(issuer).netloc
+            or urlsplit(expected_redirect).scheme != "https"):
         raise HTTPException(503, "OIDC provider unavailable")
     if request.headers.get("content-type", "").split(";")[0].strip() != "application/x-www-form-urlencoded":
         raise HTTPException(415, "Form encoding required")
@@ -48,7 +53,7 @@ async def oidc_token(request: Request):
         raise HTTPException(400, "Invalid OIDC parameters")
     if form["grant_type"][0] != "authorization_code" or form["client_id"][0] != client_id:
         raise HTTPException(400, "OIDC client mismatch")
-    if form["redirect_uri"][0] != "https://" + request.url.hostname + "/":
+    if form["redirect_uri"][0] != expected_redirect:
         raise HTTPException(400, "OIDC redirect mismatch")
     try:
         async with httpx.AsyncClient(timeout=8, follow_redirects=False) as client:
@@ -70,6 +75,7 @@ def auth_config():
         "client_id": os.getenv("VULNTRACK_OIDC_CLIENT_ID", ""),
         "authorize_url": os.getenv("VULNTRACK_OIDC_AUTHORIZE_URL", ""),
         "token_url": os.getenv("VULNTRACK_OIDC_TOKEN_URL", ""),
+        "redirect_uri": os.getenv("VULNTRACK_OIDC_REDIRECT_URI", ""),
         "scope": os.getenv("VULNTRACK_OIDC_SCOPE", "openid profile"),
         "dev_auth": os.getenv("VULNTRACK_DEV_AUTH", "").lower() == "true" and not os.getenv("VULNTRACK_OIDC_ISSUER"),
     }
