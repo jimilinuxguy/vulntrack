@@ -96,12 +96,25 @@ function renderFindings(){
  $("finding-table").innerHTML=table(rows,findingColumns);
 }
 function renderRegistry(){
+ const search=$("registry-search").value.trim().toLowerCase(),kevOnly=$("registry-filter").value==="kev";
  const visible=state.tenant?new Set(state.findings.map(f=>f.vulnerability_id)):null;
- const rows=state.registry.filter(v=>!visible||visible.has(v.id));
+ const rows=state.registry.filter(v=>(!visible||visible.has(v.id))&&(!kevOnly||v.is_kev)&&(!search||[v.title,...v.identifiers].join(' ').toLowerCase().includes(search)));
  $("registry-table").innerHTML=table(rows,[
  {title:"Vulnerability",cell:r=>'<strong>'+escapeHtml(r.title)+'</strong><small class="mono">'+escapeHtml(r.identifiers.join(" · "))+'</small>'},
  {title:"Severity",cell:r=>badge(r.severity)},
- {title:"Intelligence",cell:r=>r.is_kev?'<span class="kev">● CISA KEV</span>':"—"}],"No vulnerabilities registered.");
+ {title:"Intelligence",cell:r=>r.is_kev?'<span class="kev">● CISA KEV</span>':"—"},
+ {title:"Tenant impact",cell:r=>'<span class="impact-link">View affected tenants →</span>'}],"No vulnerabilities registered.");
+}
+async function openImpact(id){
+ const suffix=state.tenant?"?tenant_id="+encodeURIComponent(state.tenant):"";
+ const v=await request("/api/vulnerabilities/"+encodeURIComponent(id)+"/impact"+suffix);
+ $("detail-title").textContent=v.title;
+ const meta=Object.entries(v.kev_metadata||{}).filter(([,value])=>value).map(([key,value])=>'<dt>'+escapeHtml(key.replace(/([A-Z])/g," $1"))+'</dt><dd>'+escapeHtml(value)+'</dd>').join("");
+ $("detail-body").innerHTML='<section class="drawer-section"><h3>Canonical vulnerability</h3><p>'+(v.is_kev?'<span class="kev">● CISA KEV</span>':'Not in KEV')+'</p><p class="mono">'+escapeHtml(v.identifiers.join(" · "))+'</p><p>'+badge(v.severity)+'</p>'+(meta?'<dl>'+meta+'</dl>':'')+'</section>'+
+ '<section class="drawer-section"><h3>Affected tenants ('+v.tenant_count+')</h3><p>'+v.total_occurrences+' remediation occurrences within your authorized scope</p>'+
+ (v.tenants.length?v.tenants.map(t=>'<details class="impact-tenant"><summary><strong>'+escapeHtml(t.name)+'</strong><span>'+t.total+' findings · '+Object.entries(t.by_status).map(([s,n])=>n+' '+s.replaceAll("_"," ")).join(", ")+'</span></summary><div class="impact-assets">'+t.assets.map(a=>'<div class="impact-asset"><div><strong>'+escapeHtml(a.name)+'</strong><small>'+escapeHtml(a.kind)+' · '+escapeHtml(a.external_id)+'</small><small>'+escapeHtml(a.context||"No component context")+'</small></div><div>'+badge(a.status)+'<small>'+escapeHtml(a.assignee||"Unassigned")+'</small><small>Due: '+escapeHtml(a.due_date||"Not set")+'</small><button class="text-button impact-open" data-occurrence="'+escapeHtml(a.occurrence_id)+'">Open remediation →</button></div></div>').join("")+'</div></details>').join(""):'<div class="empty">No affected tenants in your authorized scope.</div>')+'</section>';
+ $("drawer").classList.remove("hidden");$("drawer-backdrop").classList.remove("hidden");
+ $("detail-body").querySelectorAll(".impact-open").forEach(b=>b.onclick=()=>openFinding(b.dataset.occurrence).catch(err=>notify(err.message,true)));
 }
 async function renderImports(){
  const imports=await request("/api/admin/imports");
@@ -138,6 +151,8 @@ function bind(){
  $("logout").onclick=()=>{showLogin();notify("Signed out of VulnTrack. Your identity provider session may remain active.")};
  $("refresh").onclick=()=>refresh().catch(e=>notify(e.message,true));
  $("tenant-select").onchange=e=>{state.tenant=e.target.value;refresh().catch(err=>notify(err.message,true))};
+ $("registry-search").oninput=renderRegistry;$("registry-filter").onchange=renderRegistry;
+ $("registry-table").onclick=e=>{const row=e.target.closest("[data-id]");if(row)openImpact(row.dataset.id).catch(err=>notify(err.message,true))};
  $("finding-search").oninput=renderFindings;$("status-filter").onchange=renderFindings;
  document.querySelectorAll("[data-view]").forEach(el=>el.onclick=()=>view(el.dataset.view));
  document.querySelectorAll("[data-goto]").forEach(el=>el.onclick=()=>view(el.dataset.goto));
